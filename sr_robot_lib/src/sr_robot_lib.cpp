@@ -131,13 +131,19 @@ const int32u SrRobotLib<StatusType, CommandType>::sensor_data_types[nb_sensor_da
                                                                                        TACTILE_SENSOR_TYPE_UBI0_TACTILE};
 
 template <class StatusType, class CommandType>
-SrRobotLib<StatusType, CommandType>::SrRobotLib(hardware_interface::HardwareInterface *hw)
+const double SrRobotLib<StatusType, CommandType>::tactile_timeout = 10.0;
+
+template <class StatusType, class CommandType>
+SrRobotLib<StatusType, CommandType>::SrRobotLib(hardware_interface::HardwareInterface *hw, ros::NodeHandle nh, ros::NodeHandle nhtilde, string device_id, string joint_prefix)
   : main_pic_idle_time(0),
   main_pic_idle_time_min(1000),
   tactile_current_state(operation_mode::device_update_state::INITIALIZATION),
   hw_(static_cast<RobotState*> (hw)),
+  device_id_(device_id),
+  joint_prefix_(joint_prefix),
   nullify_demand_(false),
-  nh_tilde("~"),
+  nodehandle_(nh),
+  nh_tilde(nhtilde),
 
   //advertise the service to nullify the demand sent to the motor
   // this makes it possible to easily stop the controllers.
@@ -149,7 +155,7 @@ SrRobotLib<StatusType, CommandType>::SrRobotLib(hardware_interface::HardwareInte
 
   //read the generic sensor polling frequency from the parameter server
   generic_sensor_update_rate_configs_vector(read_update_rate_configs("generic_sensor_data_update_rate/", nb_sensor_data, human_readable_sensor_data_types, sensor_data_types)),
-
+     
   //read the pst3 sensor polling frequency from the parameter server
   pst3_sensor_update_rate_configs_vector(read_update_rate_configs("pst3_sensor_data_update_rate/", nb_sensor_data, human_readable_sensor_data_types, sensor_data_types)),
 
@@ -159,7 +165,13 @@ SrRobotLib<StatusType, CommandType>::SrRobotLib(hardware_interface::HardwareInte
   //read the UBI0 sensor polling frequency from the parameter server
   ubi0_sensor_update_rate_configs_vector(read_update_rate_configs("ubi0_sensor_data_update_rate/", nb_sensor_data, human_readable_sensor_data_types, sensor_data_types)),
 
-  tactiles_init(shared_ptr<GenericTactiles<StatusType, CommandType> >(new GenericTactiles<StatusType, CommandType>(generic_sensor_update_rate_configs_vector, operation_mode::device_update_state::INITIALIZATION))),
+  tactile_init_max_duration(tactile_timeout),
+  
+  //Create a one-shot timer
+  tactile_check_init_timeout_timer (this->nh_tilde.createTimer(tactile_init_max_duration,
+                                               boost::bind(&SrRobotLib<StatusType, CommandType>::tactile_init_timer_callback, this, _1), true)),
+  lock_tactile_init_timeout_ (boost::shared_ptr<boost::mutex>(new boost::mutex())), 
+  tactiles_init(shared_ptr<GenericTactiles<StatusType, CommandType> >(new GenericTactiles<StatusType, CommandType>(nodehandle_, device_id_, generic_sensor_update_rate_configs_vector, operation_mode::device_update_state::INITIALIZATION))),
 
   //initialize the calibration map
   calibration_map(read_joint_calibration())
@@ -170,7 +182,7 @@ template <class StatusType, class CommandType>
 void SrRobotLib<StatusType, CommandType>::reinitialize_sensors()
 {
   //Create a new GenericTactiles object
-  tactiles_init = shared_ptr<GenericTactiles<StatusType, CommandType> >(new GenericTactiles<StatusType, CommandType>(generic_sensor_update_rate_configs_vector, operation_mode::device_update_state::INITIALIZATION));
+  tactiles_init = shared_ptr<GenericTactiles<StatusType, CommandType> >(new GenericTactiles<StatusType, CommandType>(nodehandle_, device_id_, generic_sensor_update_rate_configs_vector, operation_mode::device_update_state::INITIALIZATION));
   tactile_current_state = operation_mode::device_update_state::INITIALIZATION;
 }
 
@@ -190,6 +202,9 @@ bool SrRobotLib<StatusType, CommandType>::nullify_demand_callback(sr_robot_msgs:
 template <class StatusType, class CommandType>
 void SrRobotLib<StatusType, CommandType>::build_tactile_command(CommandType* command)
 {
+  //Mutual exclusion with the the initialization timeout
+  boost::mutex::scoped_lock l(*lock_tactile_init_timeout_);
+
   if (tactile_current_state == operation_mode::device_update_state::INITIALIZATION)
   {
     if (tactiles_init->sensor_updater->build_init_command(command)
@@ -197,10 +212,12 @@ void SrRobotLib<StatusType, CommandType>::build_tactile_command(CommandType* com
     {
       tactile_current_state = operation_mode::device_update_state::OPERATION;
 
+      tactile_check_init_timeout_timer.stop();
+
       switch (tactiles_init->tactiles_vector->at(0).which_sensor)
       {
         case TACTILE_SENSOR_PROTOCOL_TYPE_PST3:
-          tactiles = shared_ptr<ShadowPSTs<StatusType, CommandType> >(new ShadowPSTs<StatusType, CommandType>(pst3_sensor_update_rate_configs_vector,
+          tactiles = shared_ptr<ShadowPSTs<StatusType, CommandType> >(new ShadowPSTs<StatusType, CommandType>(nodehandle_, device_id_, pst3_sensor_update_rate_configs_vector,
                                                                                                               operation_mode::device_update_state::OPERATION,
                                                                                                               tactiles_init->tactiles_vector));
 
@@ -208,14 +225,14 @@ void SrRobotLib<StatusType, CommandType>::build_tactile_command(CommandType* com
           break;
 
         case TACTILE_SENSOR_PROTOCOL_TYPE_BIOTAC_2_3:
-          tactiles = shared_ptr<Biotac<StatusType, CommandType> >(new Biotac<StatusType, CommandType>(biotac_sensor_update_rate_configs_vector, operation_mode::device_update_state::OPERATION,
+          tactiles = shared_ptr<Biotac<StatusType, CommandType> >(new Biotac<StatusType, CommandType>(nodehandle_, device_id_, biotac_sensor_update_rate_configs_vector, operation_mode::device_update_state::OPERATION,
                                                                                                       tactiles_init->tactiles_vector));
 
           ROS_INFO("Biotac tactiles initialized");
           break;
 
         case TACTILE_SENSOR_PROTOCOL_TYPE_UBI0:
-          tactiles = shared_ptr<UBI0<StatusType, CommandType> >(new UBI0<StatusType, CommandType>(ubi0_sensor_update_rate_configs_vector, operation_mode::device_update_state::OPERATION,
+          tactiles = shared_ptr<UBI0<StatusType, CommandType> >(new UBI0<StatusType, CommandType>(nodehandle_, device_id_, ubi0_sensor_update_rate_configs_vector, operation_mode::device_update_state::OPERATION,
                                                                                                   tactiles_init->tactiles_vector));
 
           ROS_INFO("UBI0 tactiles initialized");
@@ -237,6 +254,8 @@ void SrRobotLib<StatusType, CommandType>::build_tactile_command(CommandType* com
 template <class StatusType, class CommandType>
 void SrRobotLib<StatusType, CommandType>::update_tactile_info(StatusType* status)
 {
+  //Mutual exclusion with the the initialization timeout
+  boost::mutex::scoped_lock l(*lock_tactile_init_timeout_);
   if (tactile_current_state == operation_mode::device_update_state::INITIALIZATION)
   {
     if (tactiles_init != NULL)
@@ -384,6 +403,22 @@ vector<UpdateConfig> SrRobotLib<StatusType, CommandType>::read_update_rate_confi
 }
 
 template <class StatusType, class CommandType>
+  void SrRobotLib<StatusType, CommandType>::tactile_init_timer_callback(const ros::TimerEvent& event)
+  {
+    //Mutual exclusion with the the initialization timeout
+    boost::mutex::scoped_lock l(*lock_tactile_init_timeout_);
+
+    if(tactile_current_state == operation_mode::device_update_state::INITIALIZATION)
+    {
+      tactile_current_state = operation_mode::device_update_state::OPERATION;
+      tactiles = boost::shared_ptr<tactiles::UBI0<StatusType, CommandType> >(
+            new tactiles::UBI0<StatusType, CommandType>(nodehandle_, device_id_, ubi0_sensor_update_rate_configs_vector, operation_mode::device_update_state::OPERATION,
+                               tactiles_init->tactiles_vector));
+      ROS_ERROR_STREAM("Tactile Initialization Timeout: considering UBI0 tactiles");
+     }
+  }
+
+  template <class StatusType, class CommandType>  
 void SrRobotLib<StatusType, CommandType>::checkSelfTests()
 {
   ros::Rate loop_rate(1);

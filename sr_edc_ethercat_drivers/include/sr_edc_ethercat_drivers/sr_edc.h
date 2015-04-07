@@ -32,7 +32,7 @@
 #ifndef SR_EDC_H
 #define SR_EDC_H
 
-#include <ethercat_hardware/ethercat_device.h>
+#include <ros_ethercat_hardware/ethercat_hardware.h>
 #include <sr_edc_ethercat_drivers/sr0x.h>
 #include <realtime_tools/realtime_publisher.h>
 #include <std_msgs/Int16.h>
@@ -62,12 +62,9 @@ class SrEdc : public SR0X
 {
 public:
   SrEdc();
-  virtual ~SrEdc();
 
-  virtual void construct(EtherCAT_SlaveHandler *sh, int &start_address);
   virtual void construct(EtherCAT_SlaveHandler *sh, int &start_address, unsigned int ethercat_command_data_size, unsigned int ethercat_status_data_size, unsigned int ethercat_can_bridge_data_size,
   						 unsigned int ethercat_command_data_address, unsigned int ethercat_status_data_address, unsigned int ethercat_can_bridge_data_command_address, unsigned int ethercat_can_bridge_data_status_address);
-  virtual int  initialize(pr2_hardware_interface::HardwareInterface *hw, bool allow_unprogrammed=true);
 
   bool simple_motor_flasher(sr_robot_msgs::SimpleMotorFlasher::Request &req, sr_robot_msgs::SimpleMotorFlasher::Response &res);
   void build_CAN_message(ETHERCAT_CAN_BRIDGE_DATA *message);
@@ -79,6 +76,7 @@ public:
 protected:
   int                                                                  counter_;
   ros::NodeHandle                                                      nodehandle_;
+  ros::NodeHandle                                                      nh_tilde_;
 
   typedef realtime_tools::RealtimePublisher<std_msgs::Int16> rt_pub_int16_t;
   std::vector< boost::shared_ptr<rt_pub_int16_t> >   realtime_pub_;
@@ -88,6 +86,9 @@ protected:
 
   bool                             flashing;
   bool                             can_packet_acked;
+
+  std::string device_id_;
+  std::string device_joint_prefix_;
 
   /// This function will call the reinitialization function for the boards attached to the CAN bus
   virtual void reinitialize_boards() = 0;

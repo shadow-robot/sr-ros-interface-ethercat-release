@@ -1,0 +1,12 @@
+Source: ros-indigo-sr-edc-ethercat-drivers
+Section: misc
+Priority: extra
+Maintainer: Shadow Robot's software team <software@shadowrobot.com>
+Build-Depends: debhelper (>= 9.0.0), binutils-dev, ros-indigo-catkin, ros-indigo-message-generation, ros-indigo-ros-ethercat-hardware, ros-indigo-roscpp, ros-indigo-roslib, ros-indigo-sr-external-dependencies, ros-indigo-sr-robot-lib, ros-indigo-sr-robot-msgs, ros-indigo-std-msgs
+Homepage: http://ros.org/wiki/sr_edc_ethercat_drivers
+Standards-Version: 3.9.2
+
+Package: ros-indigo-sr-edc-ethercat-drivers
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, binutils-dev, ros-indigo-message-runtime, ros-indigo-ros-ethercat-hardware, ros-indigo-roscpp, ros-indigo-roslib, ros-indigo-sr-external-dependencies, ros-indigo-sr-robot-lib, ros-indigo-sr-robot-msgs, ros-indigo-std-msgs
+Description: A package implementing a ROS interface for the etherCAT Shadow Robot Dextrous Hand.
